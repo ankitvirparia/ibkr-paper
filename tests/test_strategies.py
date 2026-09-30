@@ -50,12 +50,19 @@ def test_momentum_flat_market_no_signal():
 
 def test_options_income_picks_otm_put():
     strat = OptionsIncome()
+    # Greeks now required (strategy filters missing Greeks conservatively).
+    # Plausible 31-DTE ~5% OTM put Greeks: |delta| 0.10-0.30, IV >= 12, |theta| >= 0.01.
     chain = [
-        {"strike": 640.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 2.1, "ask": 2.3},
-        {"strike": 630.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 1.4, "ask": 1.6},
-        {"strike": 620.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 0.9, "ask": 1.1},
-        {"strike": 640.0, "expiry": "20251031", "right": "C", "dte": 31, "bid": 5.0, "ask": 5.2},
-        {"strike": 600.0, "expiry": "20251128", "right": "P", "dte": 59, "bid": 1.0, "ask": 1.2},
+        {"strike": 640.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 2.1, "ask": 2.3,
+         "delta": -0.22, "iv_pct": 18.0, "theta": -0.025},
+        {"strike": 630.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 1.4, "ask": 1.6,
+         "delta": -0.17, "iv_pct": 16.0, "theta": -0.020},
+        {"strike": 620.0, "expiry": "20251031", "right": "P", "dte": 31, "bid": 0.9, "ask": 1.1,
+         "delta": -0.12, "iv_pct": 14.0, "theta": -0.015},
+        {"strike": 640.0, "expiry": "20251031", "right": "C", "dte": 31, "bid": 5.0, "ask": 5.2,
+         "delta": 0.55, "iv_pct": 18.0, "theta": -0.030},
+        {"strike": 600.0, "expiry": "20251128", "right": "P", "dte": 59, "bid": 1.0, "ask": 1.2,
+         "delta": -0.10, "iv_pct": 15.0, "theta": -0.012},
     ]
     # price 663 -> 5% OTM target = 629.85 -> closest put in 30-45 DTE is 630
     # (sleeve sized so one 630-strike CSP fits: 25% of 500k = 125k > 63k collateral)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 
@@ -28,6 +29,9 @@ class StrategyContext:
     sleeve_cash: float = 0.0
     sleeve: str = ""          # "equity" | "options"
     risk: dict = field(default_factory=dict)
+    positions: dict[str, dict] = field(default_factory=dict)  # symbol -> {"qty","avg_price"}
+    today_entries: set = field(default_factory=set)  # symbols this strategy entered today
+    now_et: datetime | None = None  # injectable clock (America/Toronto); tests set this
 
 
 class Strategy(ABC):
@@ -35,6 +39,13 @@ class Strategy(ABC):
     name: str = "base"
     sleeve: str = "equity"   # which capital sleeve this strategy may use
     kind: str = "equity"     # "equity" | "option"
+    universe_key: str = "equity"  # which config universe list to scan
+    bar_size: str = "1d"          # IBKR history bar size
+    history_period: str = "1y"    # IBKR history period
+    # Whether the runner may auto paper-fill this strategy's signals.
+    # Default False (candidate-only) so new strategies never auto-fill without
+    # explicit approval. us_momentum opts in to preserve its existing behavior.
+    auto_fill: bool = False
 
     def __init__(self, params: dict | None = None):
         self.params = params or {}

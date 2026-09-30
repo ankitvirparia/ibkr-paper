@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS cash(ts REAL, balance REAL);
 """
 
 
+class NoPositionToClose(ValueError):
+    """Raised when a close-all (qty 0) SELL arrives with no open position."""
+
+
 class PaperLedger:
     def __init__(self, db_path: str | Path, starting_cash: float):
         self.db_path = Path(db_path)
@@ -60,13 +64,19 @@ class PaperLedger:
         pos = self.conn.execute("SELECT * FROM positions WHERE symbol=?", (symbol,)).fetchone()
         cur_qty = pos["qty"] if pos else 0.0
         cur_avg = pos["avg_price"] if pos else 0.0
+        fill_qty = qty
 
         if side == "BUY":
             new_qty = cur_qty + qty
             new_avg = (cur_qty * cur_avg + qty * price) / new_qty if new_qty else 0.0
             self._set_cash(self.cash() - qty * price)
         elif side == "SELL":
+            if qty == 0 and cur_qty <= 0:
+                # Close-all signal with nothing open: pure noise (e.g. the old
+                # us_momentum breakdown exits). Do not record a phantom fill.
+                raise NoPositionToClose(f"no open position in {symbol} to close")
             close_qty = cur_qty if qty == 0 else min(qty, cur_qty)
+            fill_qty = close_qty
             new_qty = cur_qty - close_qty
             new_avg = cur_avg if new_qty else 0.0
             self._set_cash(self.cash() + close_qty * price)
@@ -88,7 +98,7 @@ class PaperLedger:
                 (symbol, new_qty, new_avg, row["kind"], row["strategy"]))
         self.conn.execute(
             "INSERT INTO fills(ts,signal_id,symbol,side,qty,price) VALUES (?,?,?,?,?,?)",
-            (now, signal_id, symbol, side, qty, price))
+            (now, signal_id, symbol, side, fill_qty, price))
         self.conn.execute("UPDATE signals SET status='PAPER_FILLED' WHERE id=?", (signal_id,))
         self.conn.commit()
         return {"symbol": symbol, "qty": new_qty, "avg_price": new_avg, "cash": self.cash()}

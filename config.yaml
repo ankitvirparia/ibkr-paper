@@ -14,6 +14,8 @@ risk:
 
 universe:
   equity: [AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO, JPM, XOM, UNH]
+  # Liquid names for the intraday opening-range-breakout strategy
+  intraday: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, META, TSLA]
   options_etf: [SPY, QQQ]
   # NASDAQ-100 most liquid names for put selling (tight option spreads)
   options_stocks: [AAPL, MSFT, NVDA, AMZN, META, TSLA, GOOGL, AVGO, COST, NFLX,
@@ -35,6 +37,14 @@ strategies:
     min_dte: 30
     max_dte: 45
     max_sleeve_per_put_pct: 25.0
+  intraday_orb:
+    or_minutes: 30
+    entry_start: "10:00"
+    entry_end: "11:30"
+    time_exit: "15:45"
+    min_range_pct: 0.15
+    risk_per_trade_pct: 0.5
+    target_r: 2.0
 
 paper:
   starting_cash: 100000

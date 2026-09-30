@@ -73,11 +73,16 @@ def ibkr_positions(account: str):
 
 
 @app.post("/signals/run")
-def signals_run():
-    """Run one paper cycle: strategies -> paper fills. Never touches real orders."""
+def signals_run(strategy: str | None = None):
+    """Run one paper cycle: strategies -> paper fills. Never touches real orders.
+
+    Optional ?strategy=<name> runs a single strategy (used by the intraday cron).
+    """
     cfg = load_cfg()
+    if strategy and strategy not in STRATEGIES:
+        raise HTTPException(404, f"unknown strategy {strategy}")
     try:
-        return run_cycle(cfg, make_client(cfg), make_ledger(cfg))
+        return run_cycle(cfg, make_client(cfg), make_ledger(cfg), only=strategy)
     except IBKRError as e:
         raise HTTPException(503, str(e))
 

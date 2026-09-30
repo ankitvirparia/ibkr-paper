@@ -1,13 +1,16 @@
 """Paper run cycle: fetch data -> strategies -> allocate -> paper fills."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ..ibkr_client import IBKRClient, IBKRError
 from ..strategies import STRATEGIES
 from ..strategies.base import StrategyContext
 from .allocator import Allocator
-from .paper_ledger import PaperLedger
+from .paper_ledger import NoPositionToClose, PaperLedger
+
+ET = ZoneInfo("America/Toronto")
 
 
 def _bars_from_history(rows: list[dict]) -> list[dict]:
@@ -39,7 +42,28 @@ def _dte(month):
         return 0
 
 
-def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger) -> dict:
+def _today_entries(ledger: PaperLedger, strategy: str, now_et: datetime) -> set:
+    """Symbols this strategy already entered today (one-entry-per-day guard)."""
+    midnight = now_et.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    out: set[str] = set()
+    rows = ledger.conn.execute(
+        "SELECT f.ts, s.symbol FROM fills f JOIN signals s ON f.signal_id = s.id "
+        "WHERE s.strategy = ? AND s.side = 'BUY'", (strategy,))
+    for ts, sym in rows:
+        try:
+            t = float(ts)
+        except (TypeError, ValueError):
+            try:
+                t = datetime.fromisoformat(str(ts)).timestamp()
+            except Exception:
+                continue
+        if t >= midnight:
+            out.add(sym)
+    return out
+
+
+def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger,
+              only: str | None = None, now_et: datetime | None = None) -> dict:
     alloc = Allocator(cfg)
     universe = cfg.get("universe", {})
     out: dict = {"strategies": {}, "errors": []}
@@ -60,16 +84,26 @@ def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger) -> dict:
         return conid_cache[sym]
 
     for strat_name, strat_cls in STRATEGIES.items():
+        if only and strat_name != only:
+            continue
         params = cfg.get("strategies", {}).get(strat_name, {})
         strat = strat_cls(params)
         sleeve = strat.sleeve
         sleeve_equity = alloc.sleeve_equity(sleeve, total_equity)
+        now_et = now_et or datetime.now(ET)
+        positions = {p["symbol"]: {"qty": p["qty"], "avg_price": p["avg_price"]}
+                     for p in ledger.positions() if p["qty"] > 0}
         ctx = StrategyContext(sleeve_cash=sleeve_equity, sleeve=sleeve,
-                              risk=cfg.get("risk", {}))
+                              risk=cfg.get("risk", {}),
+                              positions=positions,
+                              today_entries=_today_entries(ledger, strat_name, now_et),
+                              now_et=now_et)
         try:
             if strat.kind == "equity":
-                for sym in universe.get("equity", []):
-                    rows = client.history(conid(sym))
+                for sym in universe.get(strat.universe_key, []):
+                    rows = client.history(conid(sym),
+                                          period=strat.history_period,
+                                          bar=strat.bar_size)
                     ctx.bars[sym] = _bars_from_history(rows)
                     if ctx.bars[sym]:
                         last_prices[sym] = ctx.bars[sym][-1]["c"]
@@ -147,17 +181,21 @@ def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger) -> dict:
         filled, skipped = 0, 0
         for sig in signals:
             sig_id = ledger.record_signal(sig)
-            if sig.kind == "equity":
+            if strat.auto_fill and sig.kind == "equity":
                 value = sig.qty * sig.ref_price
                 open_n = len([p for p in ledger.positions() if p["qty"] > 0])
                 decision = alloc.check_new_position(sleeve, value, sleeve_equity, open_n)
                 if sig.side == "BUY" and not decision.allowed:
                     skipped += 1
                     continue
-                ledger.fill(sig_id)  # paper fill at ref price
+                try:
+                    ledger.fill(sig_id)  # paper fill at ref price
+                except NoPositionToClose:
+                    skipped += 1  # close-all with nothing open: noise, not a fill
+                    continue
                 filled += 1
             else:
-                # option candidates stay CANDIDATE in MVP (no auto paper fills)
+                # candidates stay CANDIDATE (no auto paper fills without approval)
                 skipped += 1
         out["strategies"][strat_name] = {
             "sleeve": sleeve, "sleeve_equity": round(sleeve_equity, 2),

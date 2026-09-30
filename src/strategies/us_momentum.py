@@ -25,6 +25,7 @@ class USEquityMomentum(Strategy):
     name = "us_momentum"
     sleeve = "equity"
     kind = "equity"
+    auto_fill = True  # existing behavior: equity swing signals auto paper-fill
 
     def __init__(self, params: dict | None = None):
         super().__init__(params)
