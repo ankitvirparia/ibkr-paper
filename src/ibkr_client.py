@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import httpx
 
+try:
+    from .strategies.greeks import implied_vol_put, put_delta, put_theta
+except ImportError:
+    # fallback for direct module loading
+    from strategies.greeks import implied_vol_put, put_delta, put_theta
+
 
 class IBKRError(RuntimeError):
     pass
@@ -80,13 +86,89 @@ class IBKRClient:
         return self._json(self._get("/iserver/marketdata/snapshot", params), "snapshot")
 
     def history(self, conid: int, period: str = "1y", bar: str = "1d") -> list[dict]:
-        r = self._post("/iserver/marketdata/history",
-                       {"conid": str(conid), "period": period, "bar": bar, "outsideRth": False})
+        r = self._get("/iserver/marketdata/history",
+                      {"conid": str(conid), "period": period, "bar": bar, "outsideRth": "false"})
         data = self._json(r, "history")
         return data.get("data", data)
 
     def put_strikes(self, conid: int, month: str) -> list[dict]:
-        """Option strikes for an underlying conid and expiry month (YYYYMM)."""
+        """Option strikes for an underlying conid and expiry month (YYYYMM).
+        Cached to disk for 24h (strikes don't change intraday)."""
+        import os, time as _time
+        cache_dir = "/data/strikes_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{conid}_{month}.json")
+        # Use cache if < 24h old
+        if os.path.exists(cache_file):
+            age = _time.time() - os.path.getmtime(cache_file)
+            if age < 86400:
+                try:
+                    import json as _json
+                    return _json.load(open(cache_file))
+                except Exception:
+                    pass
         r = self._get("/iserver/secdef/strikes",
                       {"conid": str(conid), "sectype": "OPT", "month": month})
-        return self._json(r, "strikes").get("put", [])
+        result = self._json(r, "strikes").get("put", [])
+        try:
+            import json as _json
+            _json.dump(result, open(cache_file, "w"))
+        except Exception:
+            pass
+        return result
+
+    def option_conid(self, underlying_conid: int, month: str, strike: float,
+                     right: str = "P") -> int | None:
+        """Option contract conid for underlying/month/strike/right."""
+        r = self._get("/iserver/secdef/info",
+                      {"conid": str(underlying_conid), "sectype": "OPT",
+                       "month": month, "strike": str(strike), "right": right})
+        data = self._json(r, "secdef_info")
+        if isinstance(data, list) and data:
+            return data[0].get("conid")
+        return None
+
+    def option_quote(self, opt_conid: int) -> dict:
+        """Bid/ask/last for an option contract."""
+        snap = self.snapshot([opt_conid], fields=["31", "84", "86"])
+        return snap[0] if snap else {}
+
+    def option_greeks(self, underlying_conid: int, month: str, strike: float,
+                      right: str, underlying_price: float,
+                      risk_free: float = 0.045) -> dict | None:
+        """Black-Scholes Greeks for an option. Returns None if price unavailable."""
+        conid = self.option_conid(underlying_conid, month, strike, right)
+        if not conid:
+            return None
+        q = self.option_quote(conid)
+        try:
+            bid = float(str(q.get("84", "0")).replace(",", ""))
+            ask = float(str(q.get("86", "0")).replace(",", ""))
+        except (ValueError, TypeError):
+            return None
+        if bid <= 0 or ask <= 0:
+            return None
+        mid = (bid + ask) / 2.0
+        # DTE from month (use month-end as approximation)
+        import calendar
+        from datetime import date
+        try:
+            y, m = int(month[:4]), int(month[4:6])
+            last = calendar.monthrange(y, m)[1]
+            dte = (date(y, m, last) - date.today()).days
+        except Exception:
+            return None
+        if dte <= 0:
+            return None
+        t = dte / 365.0
+        iv = implied_vol_put(mid, underlying_price, strike, t, risk_free)
+        if iv is None:
+            return None
+        return {
+            "conid": conid, "bid": bid, "ask": ask, "mid": mid,
+            "iv": iv, "iv_pct": iv * 100.0,
+            "delta": put_delta(underlying_price, strike, t, risk_free, iv),
+            "theta": put_theta(underlying_price, strike, t, risk_free, iv),
+            "dte": dte,
+        }
+

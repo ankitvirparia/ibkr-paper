@@ -1,5 +1,5 @@
 gateway:
-  base_url: "https://100.101.82.11:5000/v1/api"
+  base_url: "https://localhost:5000/v1/api"
   verify_ssl: false   # gateway uses a local self-signed cert
   timeout: 15
 
@@ -15,6 +15,9 @@ risk:
 universe:
   equity: [AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO, JPM, XOM, UNH]
   options_etf: [SPY, QQQ]
+  # NASDAQ-100 most liquid names for put selling (tight option spreads)
+  options_stocks: [AAPL, MSFT, NVDA, AMZN, META, TSLA, GOOGL, AVGO, COST, NFLX,
+                   AMD, QCOM, INTU, AMGN, TXN, LIN, PEP, TMUS, CSCO, ADBE]
 
 strategies:
   us_momentum:
@@ -23,6 +26,11 @@ strategies:
     atr_period: 14
     risk_per_trade_pct: 1.0
   options_income:
+    min_delta: 0.01
+    max_delta: 0.30
+    min_iv_pct: 8.0
+    min_theta: 0.005
+    max_candidates: 5
     otm_pct: 5.0
     min_dte: 30
     max_dte: 45

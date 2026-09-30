@@ -133,3 +133,21 @@ async def sso_proxy(path: str, request: Request):
 )
 async def portal_proxy(path: str, request: Request):
     return await proxy_to_gateway(request, "/portal.proxy/" + path)
+
+
+# Static assets for the inlined login page (gateway CSS/JS/images/fonts).
+# Must come after the API routes so they dont shadow them.
+
+# Static assets for the inlined login page (gateway CSS/JS/images/fonts).
+# Must come after the API routes so they don't shadow them.
+_ASSET_PREFIXES = ("css", "scripts", "images", "fonts", "en")
+
+
+@app.api_route(
+    "/{prefix}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+)
+async def gateway_assets(prefix: str, path: str, request: Request):
+    if prefix not in _ASSET_PREFIXES:
+        raise HTTPException(404, "not found")
+    return await proxy_to_gateway(request, "/" + prefix + "/" + path)

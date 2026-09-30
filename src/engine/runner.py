@@ -18,7 +18,7 @@ def _bars_from_history(rows: list[dict]) -> list[dict]:
     return out
 
 
-def _expiry_months(n: int = 3) -> list[str]:
+def _expiry_months(n: int = 2) -> list[str]:
     today = date.today()
     months = []
     for i in range(n):
@@ -26,6 +26,17 @@ def _expiry_months(n: int = 3) -> list[str]:
         y = today.year + (today.month - 1 + i) // 12
         months.append(f"{y}{m:02d}")
     return months
+
+def _dte(month):
+    """Rough days-to-expiry from YYYYMM (uses month-end)."""
+    try:
+        import calendar
+        from datetime import date as _date
+        y, m = int(month[:4]), int(month[4:6])
+        last = calendar.monthrange(y, m)[1]
+        return (_date(y, m, last) - _date.today()).days
+    except Exception:
+        return 0
 
 
 def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger) -> dict:
@@ -63,21 +74,71 @@ def run_cycle(cfg: dict, client: IBKRClient, ledger: PaperLedger) -> dict:
                     if ctx.bars[sym]:
                         last_prices[sym] = ctx.bars[sym][-1]["c"]
             else:  # option
-                for sym in universe.get("options_etf", []):
+                # ETFs + NASDAQ-100 stocks (stocks use single best-strike for speed)
+                opt_symbols = list(universe.get("options_etf", []))
+                stock_syms = list(universe.get("options_stocks", []))
+                for sym in opt_symbols + stock_syms:
                     cid = conid(sym)
                     snap = client.snapshot([cid], fields=["31"])
-                    price = (snap[0].get("31") if snap else None) or 0
-                    ctx.quotes[sym] = {"price": float(price)}
-                    last_prices[sym] = float(price)
+                    price = float((snap[0].get("31") if snap else None) or 0)
+                    ctx.quotes[sym] = {"price": price}
+                    last_prices[sym] = price
                     chain: list[dict] = []
+                    import time as _time
                     for month in _expiry_months():
+                        _time.sleep(0.3)  # avoid IBKR 429
                         for s in client.put_strikes(cid, month):
-                            chain.append({"strike": s.get("strike"),
-                                          "expiry": s.get("expiry") or month,
+                            # API returns bare strike floats (or dicts); normalize
+                            if isinstance(s, dict):
+                                strike = s.get("strike")
+                                expiry = s.get("expiry") or month
+                                dte = s.get("dte", 0)
+                            else:
+                                strike, expiry, dte = s, month, _dte(month)
+                            chain.append({"strike": strike,
+                                          "expiry": expiry,
                                           "right": "P",
-                                          "dte": s.get("dte", 0),
+                                          "dte": dte,
                                           "bid": None, "ask": None})
                     ctx.chains[sym] = chain
+                    open('/tmp/enrich.log','a').write(f'{sym} chain={len(chain)} price={price}\n')
+                    # Enrich with Black-Scholes Greeks.
+                    # ETFs: all strikes 2-10% OTM. Stocks: only the single
+                    # strike closest to 5% OTM (speed: 20 stocks x 1 call).
+                    # Per-symbol try/except: one failure must not skip others.
+                    try:
+                        is_stock = sym in stock_syms
+                        target = float(price) * 0.95 if price else 0
+                        cands = []
+                        for entry in chain:
+                            strike = entry.get("strike")
+                            if not strike or not price:
+                                continue
+                            otm = (price - strike) / price * 100.0
+                            if not (2.0 <= otm <= 10.0):
+                                continue
+                            cands.append(entry)
+                        if is_stock and cands:
+                            # single best strike for stocks
+                            cands = [min(cands, key=lambda e: abs(float(e["strike"]) - target))]
+                        open('/tmp/enrich.log','a').write(f'{sym} cands={len(cands)}\n')
+                        for entry in cands:
+                            try:
+                                _time.sleep(0.2)
+                                g = client.option_greeks(
+                                    cid, entry.get("expiry") or "", entry["strike"], "P",
+                                    float(price))
+                                open('/tmp/enrich.log','a').write(f'{sym} {entry["strike"]} g={bool(g)}\n')
+                                if g:
+                                    entry["bid"] = g["bid"]
+                                    entry["ask"] = g["ask"]
+                                    entry["iv_pct"] = g["iv_pct"]
+                                    entry["delta"] = g["delta"]
+                                    entry["theta"] = g["theta"]
+                            except Exception as e:
+                                continue  # skip this strike, try next
+                    except Exception:
+                        pass  # Greeks are best-effort; strategy handles missing
         except IBKRError as e:
             out["errors"].append(f"{strat_name}: {e}")
             continue
