@@ -1,0 +1,11 @@
+services:
+  ibkr-paper:
+    build: .
+    container_name: ibkr-paper
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /mnt/store/data-app/ibkr-paper:/data
+    # Tailscale interface only — Ankit can open http://100.101.82.11:8005/docs
+    ports:
+      - "100.101.82.11:8005:8003"

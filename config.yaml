@@ -1,0 +1,33 @@
+gateway:
+  base_url: "https://100.101.82.11:5000/v1/api"
+  verify_ssl: false   # gateway uses a local self-signed cert
+  timeout: 15
+
+allocation:
+  equity_sleeve_pct: 50
+  options_sleeve_pct: 50
+
+risk:
+  max_position_pct: 10
+  max_total_positions: 12
+  max_daily_loss_pct: 2
+
+universe:
+  equity: [AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO, JPM, XOM, UNH]
+  options_etf: [SPY, QQQ]
+
+strategies:
+  us_momentum:
+    lookback: 20
+    trend_ma: 50
+    atr_period: 14
+    risk_per_trade_pct: 1.0
+  options_income:
+    otm_pct: 5.0
+    min_dte: 30
+    max_dte: 45
+    max_sleeve_per_put_pct: 25.0
+
+paper:
+  starting_cash: 100000
+  db_path: "/data/paper.db"
