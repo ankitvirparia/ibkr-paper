@@ -3,9 +3,11 @@ services:
     build: .
     container_name: ibkr-paper
     restart: unless-stopped
+    # Host networking: the /sso/* login proxy must reach the gateway on
+    # 127.0.0.1 (its IP allow-list). uvicorn still binds the Tailscale IP
+    # only (see Dockerfile CMD) — never 0.0.0.0, the box has a public IP.
+    network_mode: host
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - /mnt/store/data-app/ibkr-paper:/data
-    # Tailscale interface only — Ankit can open http://100.101.82.11:8005/docs
-    ports:
-      - "100.101.82.11:8005:8003"
+      - /mnt/store/data-app/ibkr-paper/certs:/certs:ro

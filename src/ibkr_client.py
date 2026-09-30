@@ -14,9 +14,16 @@ class IBKRError(RuntimeError):
 
 
 class IBKRClient:
-    def __init__(self, base_url: str, verify_ssl: bool = False, timeout: float = 15):
+    def __init__(self, base_url: str, verify_ssl: bool = False, timeout: float = 15,
+                 cookies: dict | None = None):
         self.base = base_url.rstrip("/")
-        self.client = httpx.Client(verify=verify_ssl, timeout=timeout)
+        jar = dict(cookies or {})
+        try:
+            from .sso_login import load_session_cookies
+            jar.update(load_session_cookies())
+        except Exception:
+            pass
+        self.client = httpx.Client(verify=verify_ssl, timeout=timeout, cookies=jar)
 
     def _get(self, path: str, params: dict | None = None) -> httpx.Response:
         try:

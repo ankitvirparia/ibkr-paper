@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from .engine.paper_ledger import PaperLedger
 from .engine.runner import run_cycle
@@ -95,3 +95,41 @@ def paper_positions():
 @app.get("/paper/pnl")
 def paper_pnl():
     return make_ledger(load_cfg()).pnl({})
+
+
+# -- self-contained gateway login (mobile-friendly) ---------------------------
+# Serves a fully inlined copy of the gateway's JS-driven login page (a phone
+# only has to load ONE page) and reverse-proxies the /sso/* calls it makes.
+# The user types their own credentials; this service only relays bytes and
+# never sees or stores the password.
+from .sso_login import (  # noqa: E402
+    LOGIN_PAGE,
+    diag_beacon,
+    login_page_response,
+    proxy_to_gateway,
+)
+
+
+@app.get("/diag")
+async def diag(request: Request):
+    return await diag_beacon(request)
+
+
+@app.api_route(
+    "/sso/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+)
+async def sso_proxy(path: str, request: Request):
+    if path == "Login":
+        if not LOGIN_PAGE.exists():
+            raise HTTPException(503, "login page not built yet")
+        return login_page_response()
+    return await proxy_to_gateway(request, "/sso/" + path)
+
+
+@app.api_route(
+    "/portal.proxy/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+)
+async def portal_proxy(path: str, request: Request):
+    return await proxy_to_gateway(request, "/portal.proxy/" + path)
