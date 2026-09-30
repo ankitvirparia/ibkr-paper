@@ -2,7 +2,8 @@
 
 Talks to the local ibkr-gateway container (self-signed cert, verify=False is
 only for this localhost/Tailscale-local default). Implements market-data and
-account reads only — there are deliberately no order endpoints in this client.
+account reads; order placement lives in engine/broker.py (paper account only,
+human-gated) and never runs from the signal runner.
 """
 from __future__ import annotations
 
@@ -49,6 +50,15 @@ class IBKRClient:
             raise IBKRError("not authenticated — log in at the gateway URL first")
         return r
 
+    def _delete(self, path: str) -> httpx.Response:
+        try:
+            r = self.client.delete(f"{self.base}{path}")
+        except httpx.HTTPError as e:
+            raise IBKRError(f"gateway unreachable: {e}") from e
+        if r.status_code == 401:
+            raise IBKRError("not authenticated — log in at the gateway URL first")
+        return r
+
     def _json(self, r: httpx.Response, what: str):
         if r.status_code == 401:
             raise IBKRError("not authenticated — log in at the gateway URL first")
@@ -75,7 +85,13 @@ class IBKRClient:
         return self._json(self._get("/iserver/secdef/search", {"symbol": symbol}), "search")
 
     def stock_conid(self, symbol: str) -> int:
-        for c in self.search(symbol):
+        res = self.search(symbol)
+        if isinstance(res, dict):
+            # gateway answers 200 with {"error": ...} when the session is down
+            raise IBKRError(f"contract search failed for {symbol}: {res.get('error')}")
+        for c in res:
+            if not isinstance(c, dict):
+                continue
             if c.get("secType") == "STK" or "secType" not in c:
                 return int(c["conid"])
         raise IBKRError(f"no stock contract found for {symbol}")
