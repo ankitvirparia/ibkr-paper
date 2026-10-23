@@ -44,6 +44,7 @@ class FakeClient:
         return {
             "CAD": {"cashbalance": {"amount": "1000357.20", "currency": "CAD"}},
             "USD": {"cashbalance": {"amount": "6290.50", "currency": "USD"}},
+            "BASE": {"cashbalance": {"amount": "1009165.10", "currency": "BASE"}},
         }
 
 

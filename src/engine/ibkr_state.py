@@ -36,7 +36,7 @@ def _field(mapping: dict, name: str):
 def _cash_by_currency(ledger: dict) -> dict[str, float]:
     cash = {}
     for currency, values in ledger.items():
-        if not isinstance(values, dict):
+        if str(currency).upper() == "BASE" or not isinstance(values, dict):
             continue
         amount = _field(values, "cashbalance")
         if amount == 0 and "amount" in values:
