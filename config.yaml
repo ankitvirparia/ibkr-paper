@@ -47,8 +47,6 @@ strategies:
     target_r: 2.0
 
 paper:
-  starting_cash: 100000
-  db_path: "/data/paper.db"
   # Spec 004: the ONLY account the order router may touch. PaperBroker
   # refuses any other account id without sending a single request.
   account_id: "DUT160850"

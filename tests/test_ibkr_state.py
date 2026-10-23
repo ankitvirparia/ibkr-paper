@@ -99,7 +99,7 @@ def test_account_endpoint_returns_503_when_session_is_not_live(monkeypatch):
     def not_live(*args, **kwargs):
         raise ibkr_state.SessionNotLive()
 
-    monkeypatch.setattr(ibkr_state, "get_account_state", not_live)
+    monkeypatch.setattr(api, "get_account_state", not_live)
     response = TestClient(api.app).get("/ibkr/account")
 
     assert response.status_code == 503

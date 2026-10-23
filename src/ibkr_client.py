@@ -77,8 +77,17 @@ class IBKRClient:
     def accounts(self) -> list[dict]:
         return self._json(self._get("/portfolio/accounts"), "accounts")
 
+    def iserver_accounts(self) -> list[dict]:
+        return self._json(self._get("/iserver/accounts"), "iserver accounts")
+
     def positions(self, account: str) -> list[dict]:
         return self._json(self._get(f"/portfolio/{account}/positions/0"), "positions")
+
+    def account_summary(self, account: str) -> dict:
+        return self._json(self._get(f"/portfolio/{account}/summary"), "account summary")
+
+    def account_ledger(self, account: str) -> dict:
+        return self._json(self._get(f"/portfolio/{account}/ledger"), "account ledger")
 
     # -- contracts / market data ------------------------------------------
     def search(self, symbol: str) -> list[dict]:

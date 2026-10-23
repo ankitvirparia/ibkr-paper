@@ -17,7 +17,10 @@ class GuardDecision:
 
 
 class Allocator:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, account_state: dict):
+        self.account_state = account_state
+        self.net_liquidation = float(account_state["net_liquidation"])
+        self.open_positions = len(account_state.get("positions", []))
         alloc = cfg.get("allocation", {})
         self.sleeve_pct = {
             "equity": float(alloc.get("equity_sleeve_pct", 50)),
@@ -28,11 +31,15 @@ class Allocator:
         self.max_positions = int(risk.get("max_total_positions", 12))
         self.max_daily_loss_pct = float(risk.get("max_daily_loss_pct", 2))
 
-    def sleeve_equity(self, sleeve: str, total_equity: float) -> float:
-        return total_equity * self.sleeve_pct.get(sleeve, 0) / 100.0
+    def sleeve_equity(self, sleeve: str) -> float:
+        return self.net_liquidation * self.sleeve_pct.get(sleeve, 0) / 100.0
 
-    def check_new_position(self, sleeve: str, position_value: float,
-                           sleeve_equity: float, open_positions: int) -> GuardDecision:
+    def max_position_value(self, sleeve: str) -> float:
+        return self.sleeve_equity(sleeve) * self.max_position_pct / 100.0
+
+    def check_new_position(self, sleeve: str, position_value: float) -> GuardDecision:
+        sleeve_equity = self.sleeve_equity(sleeve)
+        open_positions = self.open_positions
         if sleeve_equity <= 0:
             return GuardDecision(False, "sleeve equity is zero")
         if position_value > sleeve_equity * self.max_position_pct / 100.0:

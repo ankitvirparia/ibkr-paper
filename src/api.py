@@ -7,9 +7,11 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .engine.broker import BrokerGuardError, BrokerRejected, PaperBroker
-from .engine.paper_ledger import PaperLedger
+from .engine.ibkr_state import AccountGuardError, SessionNotLive, get_account_state
+from .engine.order_store import OrderStore
 from .engine.runner import run_cycle
 from .ibkr_client import IBKRClient, IBKRError
 from .strategies import STRATEGIES
@@ -30,9 +32,9 @@ def make_client(cfg: dict) -> IBKRClient:
                       timeout=g.get("timeout", 15))
 
 
-def make_ledger(cfg: dict) -> PaperLedger:
+def make_order_store(cfg: dict) -> OrderStore:
     p = cfg["paper"]
-    return PaperLedger(p["db_path"], float(p["starting_cash"]))
+    return OrderStore(p.get("order_db_path", "/data/orders.db"))
 
 
 def make_broker(cfg: dict) -> PaperBroker:
@@ -72,50 +74,55 @@ def ibkr_auth():
         raise HTTPException(503, str(e))
 
 
-@app.get("/ibkr/accounts")
-def ibkr_accounts():
+def _account_state_response():
     try:
-        return make_client(load_cfg()).accounts()
-    except IBKRError as e:
-        raise HTTPException(503, str(e))
+        return get_account_state(make_client(load_cfg()))
+    except SessionNotLive:
+        return JSONResponse(status_code=503, content={"status": "session_not_live"})
+    except AccountGuardError as e:
+        return JSONResponse(status_code=503, content={
+            "status": "account_guard_error", "detail": str(e)})
+
+
+@app.get("/ibkr/account")
+@app.get("/ibkr/accounts")
+def ibkr_account_state():
+    return _account_state_response()
 
 
 @app.get("/ibkr/positions")
-def ibkr_positions(account: str):
-    try:
-        return make_client(load_cfg()).positions(account)
-    except IBKRError as e:
-        raise HTTPException(503, str(e))
+def ibkr_positions(account: str | None = None):
+    if account is not None and account != "DUT160850":
+        raise HTTPException(400, "only paper account DUT160850 is supported")
+    state = _account_state_response()
+    if isinstance(state, JSONResponse):
+        return state
+    return state["positions"]
+
+
+@app.get("/ibkr/balance")
+def ibkr_balance():
+    state = _account_state_response()
+    if isinstance(state, JSONResponse):
+        return state
+    return {key: state[key] for key in (
+        "account_id", "cash_by_currency", "net_liquidation", "buying_power",
+        "available_funds", "gross_position_value", "source", "fetched_at")}
 
 
 @app.post("/signals/run")
 def signals_run(strategy: str | None = None):
-    """Run one paper cycle: strategies -> paper fills. Never touches real orders.
-
-    Optional ?strategy=<name> runs a single strategy (used by the intraday cron).
-    """
+    """Scan live account state and return strategy signals only."""
     cfg = load_cfg()
     if strategy and strategy not in STRATEGIES:
         raise HTTPException(404, f"unknown strategy {strategy}")
     try:
-        return run_cycle(cfg, make_client(cfg), make_ledger(cfg), only=strategy)
-    except IBKRError as e:
-        raise HTTPException(503, str(e))
-
-
-@app.get("/paper/signals")
-def paper_signals(limit: int = 100):
-    return make_ledger(load_cfg()).signals(limit)
-
-
-@app.get("/paper/positions")
-def paper_positions():
-    return make_ledger(load_cfg()).positions()
-
-
-@app.get("/paper/pnl")
-def paper_pnl():
-    return make_ledger(load_cfg()).pnl({})
+        return run_cycle(cfg, make_client(cfg), only=strategy)
+    except SessionNotLive:
+        return JSONResponse(status_code=503, content={"status": "session_not_live"})
+    except AccountGuardError as e:
+        return JSONResponse(status_code=503, content={
+            "status": "account_guard_error", "detail": str(e)})
 
 
 # -- human-gated paper order routing (spec 004) ------------------------------
@@ -175,7 +182,7 @@ def orders_preview(body: dict):
         raise HTTPException(400, f"bad order params: {e}")
     except IBKRError as e:
         raise HTTPException(503, str(e))
-    ledger = make_ledger(cfg)
+    ledger = make_order_store(cfg)
     ttl = _ticket_ttl(cfg)
     ticket_id = ledger.issue_ticket(order, signal_id=body.get("signal_id"),
                                     ttl_sec=ttl)
@@ -197,7 +204,7 @@ def orders_place(body: dict):
     ticket_id = body.get("ticket_id")
     if not ticket_id:
         raise HTTPException(400, "ticket_id required")
-    ledger = make_ledger(cfg)
+    ledger = make_order_store(cfg)
     ticket = ledger.get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(400, "unknown ticket")
@@ -250,7 +257,7 @@ def orders_confirm(body: dict):
     ticket_id = body.get("ticket_id")
     if not ticket_id:
         raise HTTPException(400, "ticket_id required")
-    ledger = make_ledger(cfg)
+    ledger = make_order_store(cfg)
     bo = ledger.broker_order_by_ticket(ticket_id)
     if not bo or bo["status"] != "NEEDS_CONFIRM" or not bo["reply_id"]:
         raise HTTPException(400, "no pending IBKR confirmation for this ticket")
@@ -271,7 +278,7 @@ def orders_confirm(body: dict):
 def orders_list():
     """Local broker order records + live IBKR open orders (best effort)."""
     cfg = load_cfg()
-    ledger = make_ledger(cfg)
+    ledger = make_order_store(cfg)
     live = []
     try:
         live = make_broker(cfg).open_orders()
@@ -283,7 +290,7 @@ def orders_list():
 @app.delete("/orders/{order_id}")
 def orders_cancel(order_id: str):
     cfg = load_cfg()
-    ledger = make_ledger(cfg)
+    ledger = make_order_store(cfg)
     try:
         res = make_broker(cfg).cancel(_paper_account(cfg), order_id)
     except BrokerGuardError as e:

@@ -18,6 +18,10 @@ def _bars(n, start=100.0, drift=0.5, spike_last=None):
     return bars
 
 
+def test_momentum_signals_never_auto_fill():
+    assert USEquityMomentum.auto_fill is False
+
+
 def test_momentum_breakout_generates_buy():
     strat = USEquityMomentum()
     bars = _bars(60, drift=0.3)

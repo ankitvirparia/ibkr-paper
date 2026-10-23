@@ -1,8 +1,8 @@
 # ibkr-paper — paper-trading signal service for IBKR (50% options / 50% US stocks)
 
 ## What it is
-- Talks to the local `ibkr-gateway` (IBKR Client Portal Gateway) for market data.
-- **Paper only**: signals are simulated in a local SQLite ledger. No order code exists.
+- Reads live paper-account state and market data from the local `ibkr-gateway` (IBKR Client Portal Gateway).
+- Strategies return signals only; execution is human-gated through the paper order ticket flow.
 - Two sleeves: `options` (income strategies) and `equity` (US stock strategies).
 
 ## Deploy a new strategy
@@ -21,9 +21,9 @@ curl -X POST http://100.101.82.11:8005/signals/run
 
 ## API
 - `GET /health`, `GET /strategies`
-- `GET /ibkr/auth`, `GET /ibkr/accounts`, `GET /ibkr/positions?account=DUT160850`
-- `POST /signals/run` — one paper cycle
-- `GET /paper/signals`, `GET /paper/positions`, `GET /paper/pnl`
+- `GET /ibkr/auth`, `GET /ibkr/account`, `GET /ibkr/positions?account=DUT160850`, `GET /ibkr/balance`
+- `POST /signals/run` — live-sized signal scan (signals only)
+- `POST /orders/preview`, `/orders/place`, `/orders/confirm` — human-gated paper ticket flow
 
 ## Paper login (Ankit)
 Gateway login is manual, in the browser: `https://100.101.82.11:5000`

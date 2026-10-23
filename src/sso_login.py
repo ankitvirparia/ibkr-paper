@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, Response
 
 log = logging.getLogger("ibkr-paper.sso")
 
-GW_BASE = "https://127.0.0.1:5000"
+GW_BASE = "https://localhost:5000"
 COOKIE_JAR = Path("/data/.ibkr_cookies.json")
 LOGIN_PAGE = Path(__file__).resolve().parent.parent / "static" / "sso_login.html"
 # uvicorn serves this app on this exact origin; used to rewrite redirects.

@@ -1,7 +1,7 @@
 """Tests for spec 004 — paper order routing.
 
 Broker talks to the IBKR gateway through a fake transport (no network).
-Ticket store lives on PaperLedger (sqlite). Nothing here places a real order.
+Ticket store uses SQLite. Nothing here places a real order.
 """
 import time
 
@@ -12,7 +12,7 @@ from src.engine.broker import (
     BrokerRejected,
     PaperBroker,
 )
-from src.engine.paper_ledger import PaperLedger
+from src.engine.order_store import OrderStore
 from src.ibkr_client import IBKRClient, IBKRError
 
 PAPER_ACCT = "DUT160850"
@@ -180,10 +180,10 @@ def test_whatif_returns_margin_block():
     assert path == f"/iserver/account/{PAPER_ACCT}/orders/whatif"
 
 
-# -- tickets (PaperLedger) --------------------------------------------------
+# -- tickets (OrderStore) ---------------------------------------------------
 
 def _ledger(tmp_path):
-    return PaperLedger(str(tmp_path / "t.db"), 100_000)
+    return OrderStore(str(tmp_path / "t.db"))
 
 
 def test_ticket_issue_and_redeem(tmp_path):
@@ -257,9 +257,17 @@ def test_cancel_refuses_minus_one():
 
 # -- runner isolation: the engine never routes orders -------------------------
 
-def test_runner_never_touches_order_endpoints(tmp_path):
+def test_runner_never_touches_order_endpoints(monkeypatch):
     """run_cycle must not POST to /orders — no auto-routing path may exist."""
+    from src.engine import runner
     from src.engine.runner import run_cycle
+
+    monkeypatch.setattr(runner, "get_account_state", lambda client: {
+        "account_id": PAPER_ACCT, "positions": [], "net_liquidation": 100_000,
+        "cash_by_currency": {"USD": 100_000}, "buying_power": 100_000,
+        "available_funds": 100_000, "gross_position_value": 0,
+        "source": "ibkr-paper-live", "fetched_at": "now",
+    })
 
     class RecordingClient(FakeIBKRClient):
         def stock_conid(self, sym):
@@ -279,8 +287,7 @@ def test_runner_never_touches_order_endpoints(tmp_path):
         "strategies": {"intraday_orb": {}},
         "risk": {},
     }
-    ledger = _ledger(tmp_path)
-    run_cycle(cfg, c, ledger, only="intraday_orb")
+    run_cycle(cfg, c, only="intraday_orb")
     order_posts = [p for p, _ in c.posts if "/orders" in p]
     assert order_posts == []
     assert "broker" not in dir(__import__("src.engine.runner", fromlist=["x"]))

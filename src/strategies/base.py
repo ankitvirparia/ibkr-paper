@@ -17,7 +17,7 @@ class Signal:
     ref_price: float = 0.0
     reason: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
-    status: str = "CANDIDATE"  # CANDIDATE -> PAPER_FILLED
+    status: str = "CANDIDATE"
 
 
 @dataclass
@@ -42,9 +42,7 @@ class Strategy(ABC):
     universe_key: str = "equity"  # which config universe list to scan
     bar_size: str = "1d"          # IBKR history bar size
     history_period: str = "1y"    # IBKR history period
-    # Whether the runner may auto paper-fill this strategy's signals.
-    # Default False (candidate-only) so new strategies never auto-fill without
-    # explicit approval. us_momentum opts in to preserve its existing behavior.
+    # Legacy compatibility marker; signal generation never executes fills.
     auto_fill: bool = False
 
     def __init__(self, params: dict | None = None):

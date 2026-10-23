@@ -39,6 +39,6 @@ def test_position_guard_blocks_too_many_live_positions():
 
 
 def test_kill_switch():
-    a = Allocator(CFG)
+    a = Allocator(CFG, account_state=LIVE_STATE)
     assert a.kill_switch(-2.5).allowed  # True == halt
     assert not a.kill_switch(-1.0).allowed

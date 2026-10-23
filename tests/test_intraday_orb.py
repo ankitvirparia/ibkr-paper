@@ -151,55 +151,22 @@ def test_strategy_declares_intraday_bars():
     assert strat.name == "intraday_orb"
 
 
-def test_fill_qty_zero_sell_closes_whole_position(tmp_path):
-    from src.engine.paper_ledger import PaperLedger
-    from src.strategies.base import Signal
-
-    ledger = PaperLedger(str(tmp_path / "t.db"), 100_000)
-    buy = Signal(strategy="intraday_orb", symbol="SPY", side="BUY",
-                 kind="equity", qty=10, ref_price=100.0)
-    buy_id = ledger.record_signal(buy)
-    ledger.fill(buy_id)
-    sell = Signal(strategy="intraday_orb", symbol="SPY", side="SELL",
-                  kind="equity", qty=0, ref_price=101.0)
-    sell_id = ledger.record_signal(sell)
-    ledger.fill(sell_id)
-    # fully closed -> position row removed
-    assert [p for p in ledger.positions() if p["symbol"] == "SPY"] == []
-    fill = ledger.conn.execute(
-        "SELECT qty, price FROM fills WHERE signal_id=?", (sell_id,)).fetchone()
-    assert fill["qty"] == 10 and fill["price"] == 101.0  # close-all resolved
-    row = ledger.conn.execute(
-        "SELECT status FROM signals WHERE id=?", (sell_id,)).fetchone()
-    assert row["status"] == "PAPER_FILLED"
-
-
-def test_fill_qty_zero_sell_when_flat_is_noop(tmp_path):
-    from src.engine.paper_ledger import NoPositionToClose, PaperLedger
-    from src.strategies.base import Signal
-
-    ledger = PaperLedger(str(tmp_path / "t.db"), 100_000)
-    sell = Signal(strategy="intraday_orb", symbol="SPY", side="SELL",
-                  kind="equity", qty=0, ref_price=101.0)
-    sell_id = ledger.record_signal(sell)
-    with pytest.raises(NoPositionToClose):
-        ledger.fill(sell_id)
-    row = ledger.conn.execute(
-        "SELECT status FROM signals WHERE id=?", (sell_id,)).fetchone()
-    assert row["status"] == "CANDIDATE"  # never marked filled
-
-
 def test_intraday_orb_does_not_auto_fill():
-    # Candidate-only by default: the runner must not paper-fill ORB signals
-    # without explicit approval (standing "don't trade" boundary).
+    # Strategies emit candidate signals only; the runner never simulates fills.
     assert IntradayORB.auto_fill is False
 
 
-def test_runner_keeps_intraday_signals_candidate_only(tmp_path):
-    """End-to-end through run_cycle with a fake IBKR client: a genuine ORB
-    breakout must be recorded CANDIDATE with no paper fill and no position."""
-    from src.engine.paper_ledger import PaperLedger
+def test_runner_returns_intraday_signals_without_simulated_fills(monkeypatch):
+    """A genuine breakout is returned as a candidate with live sizing."""
+    from src.engine import runner
     from src.engine.runner import run_cycle
+
+    monkeypatch.setattr(runner, "get_account_state", lambda client: {
+        "account_id": "DUT160850", "positions": [], "net_liquidation": 100_000,
+        "cash_by_currency": {"USD": 100_000}, "buying_power": 100_000,
+        "available_funds": 100_000, "gross_position_value": 0,
+        "source": "ibkr-paper-live", "fetched_at": "now",
+    })
 
     day_bars = [
         _mbar(9, 30, 660.0, 661.0, 659.5, 660.5),
@@ -223,21 +190,19 @@ def test_runner_keeps_intraday_signals_candidate_only(tmp_path):
             return day_bars
 
     cfg = {
-        "paper": {"starting_cash": 100_000},
         "allocation": {"equity_sleeve_pct": 50, "options_sleeve_pct": 50},
         "universe": {"intraday": ["SPY"]},
         "strategies": {"intraday_orb": {}},
         "risk": {},
     }
-    ledger = PaperLedger(str(tmp_path / "t.db"), 100_000)
     now = DAY.replace(hour=10, minute=30)  # inside the 10:00-11:30 entry window
-    out = run_cycle(cfg, FakeClient(), ledger, only="intraday_orb", now_et=now)
+    out = run_cycle(cfg, FakeClient(), only="intraday_orb", now_et=now)
 
     strat_out = out["strategies"]["intraday_orb"]
     assert strat_out["signals"] == 1
     assert strat_out["paper_filled"] == 0
     assert strat_out["candidates"] == 1
-    row = ledger.conn.execute("SELECT status, side, qty FROM signals").fetchone()
-    assert row["status"] == "CANDIDATE" and row["side"] == "BUY" and row["qty"] > 0
-    assert ledger.positions() == []
-    assert ledger.conn.execute("SELECT COUNT(*) c FROM fills").fetchone()["c"] == 0
+    assert strat_out["items"][0]["status"] == "CANDIDATE"
+    assert strat_out["items"][0]["side"] == "BUY"
+    assert strat_out["items"][0]["qty"] > 0
+    assert out["account_state"]["source"] == "ibkr-paper-live"
