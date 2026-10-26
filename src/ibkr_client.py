@@ -105,10 +105,31 @@ class IBKRClient:
                 return int(c["conid"])
         raise IBKRError(f"no stock contract found for {symbol}")
 
-    def snapshot(self, conids: list[int], fields: list[str] | None = None) -> list[dict]:
+    def snapshot(self, conids: list[int], fields: list[str] | None = None,
+                 retries: int = 4, retry_delay: float = 1.5) -> list[dict]:
+        """Snapshot with warmth retries.
+
+        The gateway lazily subscribes on first touch: the first call for a
+        contract often returns only the conid echo, with fields arriving on
+        later calls. Retry until every requested field is present in every
+        row (a batch row that never warms just burns the bounded retries).
+        """
+        import time as _time
         params = {"conids": ",".join(str(c) for c in conids),
                   "fields": ",".join(fields or ["31", "84", "86"])}
-        return self._json(self._get("/iserver/marketdata/snapshot", params), "snapshot")
+        wanted = fields or ["31", "84", "86"]
+        result: list[dict] = []
+        for attempt in range(max(1, retries)):
+            result = self._json(self._get("/iserver/marketdata/snapshot", params), "snapshot")
+            if not isinstance(result, list):
+                return result
+            missing = any(
+                row.get(f) is None or str(row.get(f)) in ("", "None")
+                for row in result if isinstance(row, dict) for f in wanted)
+            if not missing or attempt == max(1, retries) - 1:
+                return result
+            _time.sleep(retry_delay)
+        return result
 
     def history(self, conid: int, period: str = "1y", bar: str = "1d") -> list[dict]:
         r = self._get("/iserver/marketdata/history",
@@ -158,23 +179,83 @@ class IBKRClient:
         snap = self.snapshot([opt_conid], fields=["31", "84", "86"])
         return snap[0] if snap else {}
 
+    def option_contracts(self, underlying_conid: int, month: str, strike: float,
+                         right: str = "P") -> list[dict]:
+        """All option contracts for (underlying, month, strike, right).
+
+        Each row carries maturityDate (YYYYMMDD) — the true expiry. The old
+        option_conid() took data[0] blindly, which could be any weekly in
+        the month; callers must select by maturityDate.
+        """
+        r = self._get("/iserver/secdef/info",
+                      {"conid": str(underlying_conid), "sectype": "OPT",
+                       "month": month, "strike": str(strike), "right": right})
+        data = self._json(r, "secdef_info")
+        return data if isinstance(data, list) else []
+
+    def _greeks_from_quote(self, opt_conid: int, quote: dict, strike: float,
+                           underlying_price: float, dte: int,
+                           risk_free: float = 0.045) -> dict | None:
+        try:
+            bid = float(str(quote.get("84", "0")).replace(",", ""))
+            ask = float(str(quote.get("86", "0")).replace(",", ""))
+            last = float(str(quote.get("31", "0")).replace(",", ""))
+        except (ValueError, TypeError):
+            return None
+        price = (bid + ask) / 2.0 if bid > 0 and ask > 0 else (last if last > 0 else 0.0)
+        if price <= 0 or dte <= 0:
+            return None
+        t = dte / 365.0
+        iv = implied_vol_put(price, underlying_price, strike, t, risk_free)
+        if iv is None:
+            return None
+        return {
+            "conid": opt_conid, "bid": bid, "ask": ask, "mid": price,
+            "iv": iv, "iv_pct": iv * 100.0,
+            "delta": put_delta(underlying_price, strike, t, risk_free, iv),
+            "theta": put_theta(underlying_price, strike, t, risk_free, iv),
+            "dte": dte,
+        }
+
+    def option_greeks_for_contract(self, opt_conid: int, maturity_date: str,
+                                   strike: float, underlying_price: float,
+                                   risk_free: float = 0.045) -> dict | None:
+        """Black-Scholes Greeks for one option contract, TRUE DTE."""
+        from datetime import date as _date, datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        try:
+            y, m, d = (int(maturity_date[0:4]), int(maturity_date[4:6]),
+                       int(maturity_date[6:8]))
+            dte = (_date(y, m, d) - _dt.now(_ZI("America/Toronto")).date()).days
+        except Exception:
+            return None
+        if dte <= 0:
+            return None
+        q = self.option_quote(opt_conid)
+        if not q:
+            return None
+        return self._greeks_from_quote(opt_conid, q, strike, underlying_price,
+                                       dte, risk_free)
+
     def option_greeks(self, underlying_conid: int, month: str, strike: float,
                       right: str, underlying_price: float,
                       risk_free: float = 0.045) -> dict | None:
-        """Black-Scholes Greeks for an option. Returns None if price unavailable."""
+        """Black-Scholes Greeks for an option. Returns None if price unavailable.
+
+        month may be YYYYMM (legacy: first contract of the month, DTE from
+        month-end) or YYYYMMDD (exact maturity: the matching contract, true
+        DTE). New callers should pass the exact maturity date.
+        """
+        if len(month) == 8:
+            contracts = self.option_contracts(underlying_conid, month[:6], strike, right)
+            match = [c for c in contracts if str(c.get("maturityDate")) == month]
+            if not match:
+                return None
+            return self.option_greeks_for_contract(
+                match[0].get("conid"), month, strike, underlying_price, risk_free)
         conid = self.option_conid(underlying_conid, month, strike, right)
         if not conid:
             return None
-        q = self.option_quote(conid)
-        try:
-            bid = float(str(q.get("84", "0")).replace(",", ""))
-            ask = float(str(q.get("86", "0")).replace(",", ""))
-        except (ValueError, TypeError):
-            return None
-        if bid <= 0 or ask <= 0:
-            return None
-        mid = (bid + ask) / 2.0
-        # DTE from month (use month-end as approximation)
         import calendar
         from datetime import date
         try:
@@ -185,15 +266,8 @@ class IBKRClient:
             return None
         if dte <= 0:
             return None
-        t = dte / 365.0
-        iv = implied_vol_put(mid, underlying_price, strike, t, risk_free)
-        if iv is None:
+        q = self.option_quote(conid)
+        if not q:
             return None
-        return {
-            "conid": conid, "bid": bid, "ask": ask, "mid": mid,
-            "iv": iv, "iv_pct": iv * 100.0,
-            "delta": put_delta(underlying_price, strike, t, risk_free, iv),
-            "theta": put_theta(underlying_price, strike, t, risk_free, iv),
-            "dte": dte,
-        }
-
+        return self._greeks_from_quote(conid, q, strike, underlying_price,
+                                       dte, risk_free)

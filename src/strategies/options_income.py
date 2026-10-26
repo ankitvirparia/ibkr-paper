@@ -33,10 +33,12 @@ class OptionsIncome(Strategy):
         self.min_iv_pct = float(self.params.get("min_iv_pct", 12.0))
         self.min_theta = float(self.params.get("min_theta", 0.01))
         self.max_candidates = int(self.params.get("max_candidates", 5))
+        self.diagnostics: dict = {"symbols": {}}
 
     def generate(self, ctx: StrategyContext) -> list[Signal]:
         # Collect best candidate per symbol, then rank by annualized yield
         candidates: list[tuple[float, dict]] = []  # (score, info)
+        sym_diag: dict[str, dict] = {}
         for symbol, quote in ctx.quotes.items():
             price = quote.get("price")
             chain = ctx.chains.get(symbol, [])
@@ -46,6 +48,7 @@ class OptionsIncome(Strategy):
             puts = [c for c in chain
                     if c.get("right") == "P"
                     and self.min_dte <= int(c.get("dte", 0)) <= self.max_dte]
+            sym_diag[symbol] = {"puts_seen": len(puts), "greeks_ok": 0, "affordable": 0}
             if not puts:
                 continue
             # Greek filters: delta range, minimum IV, minimum theta decay
@@ -63,15 +66,18 @@ class OptionsIncome(Strategy):
                     return False
                 return True
             puts = [c for c in puts if _greeks_ok(c)]
+            sym_diag[symbol]["greeks_ok"] = len(puts)
             if not puts:
                 continue
             # Filter to affordable strikes first (collateral <= max allocation)
             max_collateral = ctx.sleeve_cash * self.max_sleeve_per_put_pct / 100.0
             affordable = [c for c in puts
                           if float(c["strike"]) * 100 <= max_collateral]
+            sym_diag[symbol]["affordable"] = len(affordable)
             if not affordable:
                 continue
-            pick = min(affordable, key=lambda c: abs(float(c["strike"]) - target))
+            pick = min(affordable, key=lambda c: (
+                abs(float(c["strike"]) - target), -(c.get("bid") or 0.0)))
             strike = float(pick["strike"])
             collateral_per = strike * 100
             max_qty = math.floor(max_collateral / collateral_per)
@@ -85,6 +91,7 @@ class OptionsIncome(Strategy):
                 "symbol": symbol, "strike": strike, "pick": pick,
                 "qty": max_qty, "bid": bid, "ann_yield": ann_yield,
             }))
+        self.diagnostics = {"symbols": sym_diag}
         # Rank by annualized yield, take top N
         candidates.sort(key=lambda x: x[0], reverse=True)
         signals: list[Signal] = []
