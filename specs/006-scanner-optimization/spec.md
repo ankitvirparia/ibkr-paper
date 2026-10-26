@@ -58,7 +58,7 @@ delta/theta are wrong, and the strategy DTE filter operates on fake DTE.
 ## Corrections during implementation (2026-10-26)
 - Sizing: aligning the CSP cap to the 10% allocator guard would make every
   SPY/QQQ put unaffordable (725 strike = $72,500 collateral vs $50,500 cap),
-  so the standing 25% cap is KEPT. Open policy question for Ankit: should
+  so the standing 25% cap is KEPT per Ankit.s ruling 2026-10-26. (Earlier open question, now decided: should
   the allocator guard treat CSP collateral differently, or should the CSP
   cap come down to 10%? No unilateral risk change.
 - Speed: the strategy only ever picks the affordable strike closest to the
