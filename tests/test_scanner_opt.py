@@ -111,7 +111,7 @@ def test_strategy_records_diagnostics():
 
 
 def test_config_csp_cap_is_standing_25_percent():
-    # OPEN POLICY QUESTION (2026-10-26): the CSP cap is 25% of sleeve while
+    # DECIDED 2026-10-26 (Ankit): the CSP cap stays 25% of sleeve while
     # the allocator guard is 10%. Aligning to 10% would make every SPY/QQQ
     # put unaffordable (e.g. 725 strike = $72,500 collateral > $50,500 cap),
     # so the standing 25% is kept until Ankit rules on the guard. This test
