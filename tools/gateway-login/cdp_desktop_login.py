@@ -42,6 +42,17 @@ def main():
         if page is None:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
         print(f"attached to page: {page.url}", flush=True)
+        # The gateway's self-signed cert rotates when its container is
+        # recreated, which kills the profile's stored exception and every
+        # navigation dies with ERR_CERT_AUTHORITY_INVALID (root cause of
+        # the 2026-10-30 and 2026-11-02 failures). Ignore cert errors for
+        # this page session (local gateway on localhost only).
+        try:
+            cdp = ctx.new_cdp_session(page)
+            cdp.send("Security.setIgnoreCertificateErrors", {"ignore": True})
+            print("cert errors ignored for this session", flush=True)
+        except Exception as e:
+            print(f"cert-ignore setup failed: {e}", flush=True)
         # Never trust restored tab state: a crashed session can leave a
         # chrome-error tab at pages[0] (broke the 2026-10-30 and 2026-11-02
         # runs: attached to chrome-error://chromewebdata/, 60s selector

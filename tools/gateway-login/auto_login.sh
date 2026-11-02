@@ -25,7 +25,7 @@ launch_chromium() {
 
 docker exec -u ankit vnc-desktop pkill -f "chromium" 2>/dev/null
 sleep 2
-launch_chromium "--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"
+launch_chromium "--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --ignore-certificate-errors"
 sleep 6
 docker run --rm --network host --shm-size=2g \
   -v "$ENV_FILE:/secrets/ibkr.env:ro" -v "$TOOLS:/work" \
