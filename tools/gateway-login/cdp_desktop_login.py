@@ -36,8 +36,27 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp("http://localhost:9222")
         ctx = browser.contexts[0]
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        for pg in ctx.pages:
+            print(f"tab: {pg.url}", flush=True)
+        page = next((pg for pg in ctx.pages if "localhost:5000" in pg.url), None)
+        if page is None:
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
         print(f"attached to page: {page.url}", flush=True)
+        # Never trust restored tab state: a crashed session can leave a
+        # chrome-error tab at pages[0] (broke the 2026-10-30 and 2026-11-02
+        # runs: attached to chrome-error://chromewebdata/, 60s selector
+        # timeout, credentials never submitted). Navigate explicitly,
+        # with one retry.
+        for attempt in range(2):
+            try:
+                page.goto("https://localhost:5000",
+                          wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                print(f"goto attempt {attempt} failed: {e}", flush=True)
+            if "chrome-error" not in page.url:
+                break
+            time.sleep(3)
+        print(f"after navigate: {page.url}", flush=True)
         page.wait_for_selector("#xyz-field-username", timeout=60000)
         print(f"login page ready: {page.url}", flush=True)
 
