@@ -1,7 +1,7 @@
 """Options income: cash-secured put candidates on index ETFs.
 
 Paper only, candidates only in MVP. Uses real option chain strikes from IBKR
-(via ctx.chains) to pick ~5% OTM puts, 30-45 DTE, filtered by Black-Scholes
+(via ctx.chains) to pick ~3% OTM puts, 30-45 DTE, filtered by Black-Scholes
 Greeks (delta, IV, theta). Sizing keeps each put cash-secured within a
 fraction of the options sleeve.
 
@@ -33,6 +33,9 @@ class OptionsIncome(Strategy):
         self.min_iv_pct = float(self.params.get("min_iv_pct", 12.0))
         self.min_theta = float(self.params.get("min_theta", 0.01))
         self.max_candidates = int(self.params.get("max_candidates", 5))
+        # Spec 007 yield floor: minimum annualized premium yield
+        # (fraction; config carries it as a percent). 0 = off.
+        self.min_ann_yield = float(self.params.get("min_ann_yield_pct", 0.0)) / 100.0
         self.diagnostics: dict = {"symbols": {}}
 
     def generate(self, ctx: StrategyContext) -> list[Signal]:
@@ -48,7 +51,8 @@ class OptionsIncome(Strategy):
             puts = [c for c in chain
                     if c.get("right") == "P"
                     and self.min_dte <= int(c.get("dte", 0)) <= self.max_dte]
-            sym_diag[symbol] = {"puts_seen": len(puts), "greeks_ok": 0, "affordable": 0}
+            sym_diag[symbol] = {"puts_seen": len(puts), "greeks_ok": 0,
+                                "affordable": 0, "yield_ok": 0}
             if not puts:
                 continue
             # Greek filters: delta range, minimum IV, minimum theta decay
@@ -87,6 +91,9 @@ class OptionsIncome(Strategy):
             dte = int(pick.get("dte") or 1)
             # Annualized premium yield: (premium / strike) * (365 / dte)
             ann_yield = (bid / strike) * (365.0 / dte) if strike > 0 else 0.0
+            if ann_yield < self.min_ann_yield:
+                continue  # pays below the program's yield floor (spec 007)
+            sym_diag[symbol]["yield_ok"] = 1
             candidates.append((ann_yield, {
                 "symbol": symbol, "strike": strike, "pick": pick,
                 "qty": max_qty, "bid": bid, "ann_yield": ann_yield,

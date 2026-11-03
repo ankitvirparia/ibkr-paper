@@ -29,11 +29,15 @@ strategies:
     risk_per_trade_pct: 1.0
   options_income:
     min_delta: 0.01
-    max_delta: 0.30
+    max_delta: 0.40
     min_iv_pct: 8.0
     min_theta: 0.005
     max_candidates: 5
-    otm_pct: 5.0
+    otm_pct: 3.0
+    # Spec 007 (2026-11-03): Ankit's target is >=1.5% profit/month on the
+    # account; with a 50% sleeve that needs ~3%/month on deployed collateral,
+    # so candidates must annualize >= 30% (~2.5% per 30 days).
+    min_ann_yield_pct: 30.0
     min_dte: 30
     max_dte: 45
     max_sleeve_per_put_pct: 25.0
