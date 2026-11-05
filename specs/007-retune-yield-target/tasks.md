@@ -6,4 +6,4 @@
 - [x] Full suite green
 - [x] Committed + pushed
 - [x] Daily-scan cron description updated to match
-- [ ] First live scan on new settings: the 2026-11-03 09:45 scheduled run
+- [x] First fully-live scan on new settings: 2026-11-05 (config params live Nov 3, but the yield-floor CODE needed a container rebuild — src is baked into the image; rebuilt and verified Nov 5)
