@@ -20,6 +20,19 @@ class IBKRError(RuntimeError):
     pass
 
 
+def _num(value) -> float:
+    """Parse an IBKR snapshot field to float.
+
+    Values may carry a leading 'C' marker (last price is a closing
+    price, e.g. 'C24.83' — seen live 2026-11-06 on AVGO 295P Dec 11).
+    Unparseable values degrade to 0.0 instead of poisoning the quote.
+    """
+    try:
+        return float(str(value).replace(",", "").lstrip("C"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
 class IBKRClient:
     def __init__(self, base_url: str, verify_ssl: bool = False, timeout: float = 15,
                  cookies: dict | None = None):
@@ -196,12 +209,9 @@ class IBKRClient:
     def _greeks_from_quote(self, opt_conid: int, quote: dict, strike: float,
                            underlying_price: float, dte: int,
                            risk_free: float = 0.045) -> dict | None:
-        try:
-            bid = float(str(quote.get("84", "0")).replace(",", ""))
-            ask = float(str(quote.get("86", "0")).replace(",", ""))
-            last = float(str(quote.get("31", "0")).replace(",", ""))
-        except (ValueError, TypeError):
-            return None
+        bid = _num(quote.get("84"))
+        ask = _num(quote.get("86"))
+        last = _num(quote.get("31"))
         price = (bid + ask) / 2.0 if bid > 0 and ask > 0 else (last if last > 0 else 0.0)
         if price <= 0 or dte <= 0:
             return None

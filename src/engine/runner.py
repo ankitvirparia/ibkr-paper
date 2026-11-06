@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from ..ibkr_client import IBKRClient, IBKRError
+from ..ibkr_client import IBKRClient, IBKRError, _num
 from ..strategies import STRATEGIES
 from ..strategies.base import StrategyContext
 from .allocator import Allocator
@@ -193,12 +193,9 @@ def run_cycle(cfg: dict, client: IBKRClient, only: str | None = None,
                                 implied_vol_put, put_delta, put_theta)
                             for entry in kept:
                                 row = snaps.get(entry["conid"], {})
-                                try:
-                                    bid = float(str(row.get("84", "0")).replace(",", ""))
-                                    ask = float(str(row.get("86", "0")).replace(",", ""))
-                                    last = float(str(row.get("31", "0")).replace(",", ""))
-                                except (ValueError, TypeError):
-                                    bid = ask = last = 0.0
+                                bid = _num(row.get("84"))
+                                ask = _num(row.get("86"))
+                                last = _num(row.get("31"))
                                 entry["right"] = "P"
                                 entry["bid"] = bid if bid > 0 else None
                                 entry["ask"] = ask if ask > 0 else None
